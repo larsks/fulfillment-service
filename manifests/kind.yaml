@@ -1,0 +1,379 @@
+---
+# Source: chart/templates/admin/sa.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: innabox
+  name: admin
+---
+# Source: chart/templates/client/sa.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: innabox
+  name: client
+---
+# Source: chart/templates/controller/sa.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: innabox
+  name: controller
+---
+# Source: chart/templates/database/access-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: innabox
+  name: fulfillment-database-access
+data:
+  access.conf: "# This is needed by the scripts that setup the database.\nlocal all all peer\n\n# For any other user we only allow access with certificates.\nhostssl all all 0.0.0.0/0 cert\nhostssl all all ::0/0 cert\n"
+---
+# Source: chart/templates/database/server-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: innabox
+  name: fulfillment-database-server
+data:
+  server.conf: "# Enable TLS:\nssl = on\nssl_ca_file = '/secrets/cert/ca.crt'\nssl_cert_file = '/secrets/cert/tls.crt'\nssl_key_file = '/secrets/cert/tls.key'\n\n# Use our custom access file:\nhba_file = '/config/access/access.conf'\n"
+---
+# Source: chart/templates/service/config-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: innabox
+  name: fulfillment-service-config
+data:
+  rules.yaml: "- name: Allow reflection and health to everyone\n  action: allow\n  condition: method.startsWith('/grpc.reflection.') || method.startsWith('/grpc.health.')\n\n- name: Allow specific methods to client\n  action: allow\n  condition: |\n    subject.name == 'system:serviceaccount:innabox:client' &&\n    method in [\n      '/events.v1/Watch',\n      '/fulfillment.v1.ClusterTemplates/Get',\n      '/fulfillment.v1.ClusterTemplates/List',\n      '/fulfillment.v1.Clusters/Create',\n      '/fulfillment.v1.Clusters/Delete',\n      '/fulfillment.v1.Clusters/Get',\n      '/fulfillment.v1.Clusters/GetKubeconfig',\n      '/fulfillment.v1.Clusters/GetKubeconfigViaHttp',\n      '/fulfillment.v1.Clusters/GetPassword',\n      '/fulfillment.v1.Clusters/GetPasswordViaHttp',\n      '/fulfillment.v1.Clusters/List',\n      '/fulfillment.v1.Clusters/Update',\n      '/fulfillment.v1.HostClasses/Get',\n      '/fulfillment.v1.HostClasses/List',\n    ]\n\n- name: Allow everything to admin and controller\n  action: allow\n  condition: |\n    subject.name in [\n      'system:serviceaccount:innabox:admin',\n      'system:serviceaccount:innabox:controller',\n      'system:serviceaccount:cloudkit-operator-system:cloudkit-operator-controller-manager',\n    ]\n"
+---
+# Source: chart/templates/service/envoy-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: innabox
+  name: fulfillment-service-envoy
+data:
+  envoy.yaml: "admin:\n  address:\n    pipe:\n      path: /run/sockets/admin.socket\n\nstatic_resources:\n\n  listeners:\n\n  - name: ingress\n    address:\n      socket_address:\n        address: 0.0.0.0\n        port_value: 8000\n    filter_chains:\n    - filters:\n      - name: envoy.filters.network.http_connection_manager\n        typed_config:\n          \"@type\": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager\n          access_log:\n          - name: envoy.access_loggers.file\n            typed_config:\n              \"@type\": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog\n              path: /dev/stdout\n          use_remote_address: true\n          xff_num_trusted_hops: 1\n          stat_prefix: ingress\n          route_config:\n            name: backend\n            virtual_hosts:\n            - name: all\n              domains:\n              - \"*\"\n              typed_per_filter_config:\n                envoy.filters.http.cors:\n                  \"@type\": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy\n                  allow_origin_string_match:\n                  - safe_regex:\n                      regex: \".*\"\n                  allow_methods: \"POST\"\n                  allow_headers: \"Authorization, Content-Type, X-User-Agent, X-Grpc-Web\"\n                  allow_credentials: true\n                  max_age: \"86400\"\n              routes:\n\n              - name: gateway\n                match:\n                  prefix: /api\n                route:\n                  cluster: gateway\n                  timeout: 300s\n\n              - name: server\n                match:\n                  prefix: /\n                route:\n                  cluster: server\n                  timeout: 300s\n\n          http_filters:\n          - name: envoy.filters.http.grpc_web\n            typed_config:\n              \"@type\": type.googleapis.com/envoy.extensions.filters.http.grpc_web.v3.GrpcWeb\n          - name: envoy.filters.http.cors\n            typed_config:\n              \"@type\": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors\n          - name: envoy.filters.http.router\n            typed_config:\n              \"@type\": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router\n      transport_socket:\n        name: envoy.transport_sockets.tls\n        typed_config:\n          \"@type\": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext\n          common_tls_context:\n            alpn_protocols:\n            - http1.1\n            - h2\n            tls_certificates:\n            - certificate_chain:\n                filename: /etc/envoy/tls/tls.crt\n              private_key:\n                filename: /etc/envoy/tls/tls.key\n\n  clusters:\n\n  - name: server\n    connect_timeout: 1s\n    type: STATIC\n    lb_policy: ROUND_ROBIN\n    typed_extension_protocol_options:\n      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:\n        \"@type\": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions\n        explicit_http_config:\n          http2_protocol_options: {}\n    load_assignment:\n      cluster_name: server\n      endpoints:\n      - lb_endpoints:\n        - endpoint:\n            address:\n              pipe:\n                path: /run/sockets/server.socket\n\n  - name: gateway\n    connect_timeout: 1s\n    type: STATIC\n    lb_policy: ROUND_ROBIN\n    typed_extension_protocol_options:\n      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:\n        \"@type\": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions\n        explicit_http_config:\n          http2_protocol_options: {}\n    load_assignment:\n      cluster_name: gateway\n      endpoints:\n      - lb_endpoints:\n        - endpoint:\n            address:\n              pipe:\n                path: /run/sockets/gateway.socket\n"
+---
+# Source: chart/templates/database/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: innabox
+  name: fulfillment-database
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# Source: chart/templates/database/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: innabox
+  name: fulfillment-database
+spec:
+  selector:
+    app: fulfillment-database
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: postgres
+---
+# Source: chart/templates/service/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: innabox
+  name: fulfillment-api
+  labels:
+    app: fulfillment-service
+spec:
+
+  type: NodePort
+
+  selector:
+    app: fulfillment-service
+  ports:
+  - name: api
+    port: 8000
+    targetPort: api
+
+    nodePort: 30000
+---
+# Source: chart/templates/controller/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: innabox
+  name: fulfillment-controller
+spec:
+  selector:
+    matchLabels:
+      app: fulfillment-controller
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: fulfillment-controller
+    spec:
+      serviceAccountName: controller
+      volumes:
+      - name: service-tls
+        secret:
+          secretName: fulfillment-service-tls
+      containers:
+      - name: controller
+        image: ghcr.io/innabox/fulfillment-service:latest
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: service-tls
+          mountPath: /etc/fulfillment-service/tls
+        command:
+        - /usr/local/bin/fulfillment-service
+        - start
+        - controller
+        - --log-level=debug
+        - --log-headers=true
+        - --log-bodies=true
+        - --grpc-server-network=tcp
+        - --grpc-server-address=fulfillment-api:8000
+        - --grpc-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+        - --grpc-ca-file=/etc/fulfillment-service/tls/ca.crt
+---
+# Source: chart/templates/service/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: innabox
+  name: fulfillment-service
+spec:
+  selector:
+    matchLabels:
+      app: fulfillment-service
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: fulfillment-service
+    spec:
+      volumes:
+      - name: sockets
+        emptyDir:
+          medium: Memory
+      - name: config
+        configMap:
+          name: fulfillment-service-config
+      - name: cert
+        secret:
+          secretName: fulfillment-database-client-cert
+      - name: envoy
+        configMap:
+          name: fulfillment-service-envoy
+      - name: envoy-tls
+        secret:
+          secretName: fulfillment-service-tls
+      containers:
+
+      - name: server
+        image: ghcr.io/innabox/fulfillment-service:latest
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: sockets
+          mountPath: /run/sockets
+        - name: config
+          mountPath: /etc/fulfillment-service
+        - name: cert
+          mountPath: /secrets/cert
+        command:
+        - /usr/local/bin/fulfillment-service
+        - start
+        - server
+        - --log-level=debug
+        - --log-headers=true
+        - --log-bodies=true
+        - "--db-url=postgres://client@fulfillment-database:5432/service?\
+          sslmode=verify-full&\
+          sslcert=/secrets/cert/tls.crt&\
+          sslkey=/secrets/cert/tls.key&\
+          sslrootcert=/secrets/cert/ca.crt"
+        - --grpc-listener-network=unix
+        - --grpc-listener-address=/run/sockets/server.socket
+        - --grpc-authn-type=jwks
+        - --grpc-authn-jwks-url=https://kubernetes.default.svc/openid/v1/jwks
+        - --grpc-authn-jwks-ca-file=/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        - --grpc-authn-jwks-token-file=/run/secrets/kubernetes.io/serviceaccount/token
+        - --grpc-authz-type=rules
+        - --grpc-authz-rules-file=/etc/fulfillment-service/rules.yaml
+
+      - name: gateway
+        image: ghcr.io/innabox/fulfillment-service:latest
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: sockets
+          mountPath: /run/sockets
+        command:
+        - /usr/local/bin/fulfillment-service
+        - start
+        - gateway
+        - --log-level=debug
+        - --log-headers=true
+        - --log-bodies=true
+        - --http-listener-network=unix
+        - --http-listener-address=/run/sockets/gateway.socket
+        - --grpc-server-network=unix
+        - --grpc-server-address=/run/sockets/server.socket
+        - --grpc-server-plaintext
+
+      - name: envoy
+        image: docker.io/envoyproxy/envoy:v1.33.0
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: sockets
+          mountPath: /run/sockets
+        - name: envoy
+          mountPath: /etc/envoy
+        - name: envoy-tls
+          mountPath: /etc/envoy/tls
+        command:
+        - envoy
+        - --config-path
+        - /etc/envoy/envoy.yaml
+        ports:
+        - name: api
+          protocol: TCP
+          containerPort: 8000
+---
+# Source: chart/templates/database/statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: innabox
+  name: fulfillment-database
+spec:
+  selector:
+    matchLabels:
+      app: fulfillment-database
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: fulfillment-database
+    spec:
+      volumes:
+      - name: server-cert
+        secret:
+          secretName: fulfillment-database-server-cert
+          defaultMode: 0440
+      - name: server-config
+        configMap:
+          name: fulfillment-database-server
+      - name: access-config
+        configMap:
+          name: fulfillment-database-access
+      - name: data
+        persistentVolumeClaim:
+          claimName: fulfillment-database
+      containers:
+      - name: server
+        image: quay.io/sclorg/postgresql-15-c9s:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: POSTGRESQL_USER
+          value: client
+        - name: POSTGRESQL_PASSWORD
+          value: ''
+        - name: POSTGRESQL_DATABASE
+          value: service
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/pgsql/data
+        - name: server-cert
+          mountPath: /secrets/cert
+        - name: server-config
+          mountPath: /opt/app-root/src/postgresql-cfg
+        - name: access-config
+          mountPath: /config/access
+        ports:
+        - name: postgres
+          protocol: TCP
+          containerPort: 5432
+---
+# Source: chart/templates/ca/ca-certificate.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  namespace: innabox
+  name: ca-certificate
+spec:
+  commonName: Innabox CA
+  isCA: true
+  issuerRef:
+    kind: Issuer
+    name: ca-issuer
+  secretName: ca-key
+---
+# Source: chart/templates/database/client-cert.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  namespace: innabox
+  name: fulfillment-database-client
+spec:
+  issuerRef:
+    name: issuer
+  usages:
+  - client auth
+  commonName: client
+  secretName: fulfillment-database-client-cert
+---
+# Source: chart/templates/database/server-cert.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  namespace: innabox
+  name: fulfillment-database-server
+spec:
+  issuerRef:
+    name: issuer
+  dnsNames:
+  - fulfillment-database
+  secretName: fulfillment-database-server-cert
+---
+# Source: chart/templates/service/certificate.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  namespace: innabox
+  name: fulfillment-api
+spec:
+  issuerRef:
+    name: issuer
+  dnsNames:
+  - localhost
+  - fulfillment-api
+  secretName: fulfillment-service-tls
+---
+# Source: chart/templates/ca/ca-issuer.yaml
+# This issuer is used to generate the the self signed certificate our our CA.
+
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  namespace: innabox
+  name: ca-issuer
+spec:
+  selfSigned: {}
+---
+# Source: chart/templates/ca/issuer.yaml
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  namespace: innabox
+  name: issuer
+spec:
+  ca:
+    secretName: ca-key

@@ -1,20 +1,9 @@
-# Kubernetes deployment
+# Helm chart
 
-This directory contains the manifests used to deploy the service to an Kubernetes cluster.
+This directory contains the _helm_ chart used to deploy the service to an Kubernetes cluster.
 
-Note that these are automatically generated from the Helm chart that you can find in the `chart`
-directory. We strongly suggest that you use those instead.
-
-There are currently two variants of the manifests: one for OpenShift, intended for production
-environments, and another for Kind, intended for development and testing environments.
-
-You should be able to use the manifests directly, but if needed you can also generate them from
-the Helm chart.
-
-```shell
-$ helm template chart --namespace innabox --set variant=kind > manifests/kind.yaml
-$ helm template chart --namespace innabox --set variant=openshift > manifests/openshift.yaml
-```
+The chart currently supports two variants: one for OpenShift, intended for production environments, and another
+for Kind, intended for development and testing environments.
 
 ## OpenShift
 
@@ -48,15 +37,18 @@ spec:
 .
 ```
 
-To deploy the application run this:
+To deploy the application run this from the root directory of the project:
 
 ```shell
-$ oc apply -k manifests/openshift.yaml
+$ helm install fulfillment-service chart \
+--namespace innabox \
+--create-namespace
+--set variant=openshift
 ```
 
 ## Kind
 
-To create the Kind cluster create a `kind.yaml` file with the following content:
+To create the Kind cluster run a command like this:
 
 ```yaml
 $ kind create cluster --config - <<.
@@ -81,5 +73,8 @@ $ kubectl apply -f https://github.com/cert-manager/cert-manager/releases/downloa
 Deploy the application:
 
 ```shell
-$ kubectl apply -k manifests/kind.yaml
+$ helm install fulfillment-service chart \
+--namespace innabox \
+--create-namespace \
+--set variant=kind
 ```
