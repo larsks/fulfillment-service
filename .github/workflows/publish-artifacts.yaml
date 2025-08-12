@@ -86,7 +86,7 @@ jobs:
         export image="${{ needs.publish-image.outputs.reference }}"
 
         # Update the image reference in the chart:
-        yq -i '.image.service = env(image)' chart/values.yaml
+        yq -i '.images.service = strenv(image)' chart/values.yaml
 
         # Package the chart:
         helm package chart --version "${version}" --app-version "${version}"

@@ -15,6 +15,7 @@
 images:
   envoy: docker.io/envoyproxy/envoy:v1.33.0
   postgres: quay.io/sclorg/postgresql-15-c9s:latest
-  service: 3
+  service: ghcr.io/innabox/fulfillment-service:latest
+
 # This indicates if the chart is being deploed to an OpenShift or Kind cluster. Valid values are "openshift" and "kind"
 variant: kind
