@@ -36,7 +36,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-tags: true
-    - run: get tag
+    - run: git tag; git describe --tags
     - id: run
       run: |
         # Login to the registry:
