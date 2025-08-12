@@ -1,0 +1,50 @@
+#
+# Copyright (c) 2025 Red Hat Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License
+# is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+# or implied. See the License for the specific language governing permissions and limitations under
+# the License.
+#
+
+name: Publish chart
+
+on:
+  push:
+    branches:
+    - main
+    tags:
+    - 'v*'
+
+jobs:
+
+  publish-chart:
+    name: Publish chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@v4
+    - run: |
+        # Login to the registry:
+        registry="ghcr.io"
+        echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login "${registry}" --username "${{ github.actor }}" --password-stdin
+
+        # Determine the chart version:
+        tag="$(git describe --tags)"
+        version="${tag#v}"
+
+        # Package the chart:
+        helm package chart --version "${version}"
+
+        # Push the chart to the image registry:
+        name="$(cat chart/Chart.yaml | yq -r '.name')"
+        chart="${name}-${version}.tgz"
+        remote="oci://${registry}/${{ github.repository_owner }}/charts"
+        helm push "${chart}" "${remote}"
