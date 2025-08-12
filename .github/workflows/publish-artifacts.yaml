@@ -16,8 +16,8 @@ name: Publish artifacts
 
 on:
   push:
-    #branches:
-    #- main
+    branches:
+    - main
     tags:
     - 'v*'
 
