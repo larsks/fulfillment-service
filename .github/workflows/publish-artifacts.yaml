@@ -36,23 +36,23 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    - run: git tag; git describe --tags
     - id: run
       run: |
         # Login to the registry:
-        registry="ghcr.io"
-        podman login --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}" "${registry}"
+        export registry="ghcr.io"
+        echo "${{ secrets.GITHUB_TOKEN }}" | podman login --username "${{ github.actor }}" --password-stdin "${registry}"
 
         # Determine the image version:
-        version="$(git describe --tags)"
-        reference="${registry}/${{ github.repository }}:${version}"
+        export version="$(git describe --tags)"
+        export version="${version#v}"
+        export reference="${registry}/${{ github.repository }}:${version}"
 
         # Build the image:
         podman build -t "${reference}" .
         podman push "${reference}"
 
         # Push the image again with the `latest` tag:
-        latest="${registry}/${{ github.repository }}:latest"
+        export latest="${registry}/${{ github.repository }}:latest"
         podman tag "${reference}" "${latest}"
         podman push "${latest}"
 
@@ -78,20 +78,23 @@ jobs:
     - id: run
       run: |
         # Login to the registry:
-        registry="ghcr.io"
-        echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login "${registry}" --username "${{ github.actor }}" --password-stdin
+        export registry="ghcr.io"
+        echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login --username "${{ github.actor }}" --password-stdin "${registry}"
 
-        # The version of the chart shouldn't have the `v` prefix:
-        version="${{ needs.publish-image.outputs.version }}"
-        version="${version#v}"
+        # Get the version and the image reference from the previous job:
+        export version="${{ needs.publish-image.outputs.version }}"
+        export image="${{ needs.publish-image.outputs.reference }}"
+
+        # Update the image reference in the chart:
+        yq -i '.image.service = env(image)' chart/values.yaml
 
         # Package the chart:
         helm package chart --version "${version}" --app-version "${version}"
 
         # Push the chart to the image registry:
-        name="$(cat chart/Chart.yaml | yq -r '.name')"
-        chart="${name}-${version}.tgz"
-        reference="oci://${registry}/${{ github.repository_owner }}/charts"
+        export name="$(yq -r '.name' chart/Chart.yaml)"
+        export chart="${name}-${version}.tgz"
+        export reference="oci://${registry}/${{ github.repository_owner }}/charts"
         helm push "${chart}" "${reference}"
 
         # Write the version and chart reference to the output:
