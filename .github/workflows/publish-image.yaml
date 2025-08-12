@@ -34,21 +34,17 @@ jobs:
     - run: |
         # Login to the registry:
         registry="ghcr.io"
-        podman login --username "${{ github.actor}}" --password "${{ secrets.GITHUB_TOKEN }}" "${registry}"
+        podman login --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}" "${registry}"
 
-        # Build and push the image with the 'latest' tag:
-        image="${registry}/${{ github.repository }}"
-        podman build -t "${image}:latest" .
-        podman push "${image}:latest"
+        # Determine the image version:
+        version="$(git describe --tags)"
+        image="${registry}/${{ github.repository }}:${version}"
 
-        # Push the image again, but with the commit hash or version tag:
-        case "${{ github.ref_type }}" in
-          tag)
-            tag="${{ github.ref_name }}"
-            ;;
-          *)
-            tag=$(git rev-parse --short HEAD)
-            ;;
-        esac
-        podman tag "${image}:latest" "${image}:${tag}"
-        podman push "${image}:${tag}"
+        # Build the image:
+        podman build -t "${image}" .
+        podman push "${image}"
+
+        # Push the image again with the `latest` tag:
+        latest="${registry}/${{ github.repository }}:latest"
+        podman tag "${image}" "${latest}"
+        podman push "${latest}"
