@@ -12,19 +12,21 @@
 # the License.
 #
 
-name: Publish image
+name: Publish chart
 
 on:
-  push:
+  workflow_run:
+    workflows:
+    - Publish image
+    types:
+    - completed
     branches:
     - main
-    tags:
-    - 'v*'
 
 jobs:
 
-  publish-image:
-    name: Publish image
+  publish-chart:
+    name: Publish chart
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -34,17 +36,17 @@ jobs:
     - run: |
         # Login to the registry:
         registry="ghcr.io"
-        podman login --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}" "${registry}"
+        echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login "${registry}" --username "${{ github.actor }}" --password-stdin
 
-        # Determine the image version:
-        version="$(git describe --tags)"
-        image="${registry}/${{ github.repository }}:${version}"
+        # Determine the chart version:
+        tag="$(git describe --tags)"
+        version="${tag#v}"
 
-        # Build the image:
-        podman build -t "${image}" .
-        podman push "${image}"
+        # Package the chart:
+        helm package chart --version "${version}" --app-version "${version}"
 
-        # Push the image again with the `latest` tag:
-        latest="${registry}/${{ github.repository }}:latest"
-        podman tag "${image}" "${latest}"
-        podman push "${latest}"
+        # Push the chart to the image registry:
+        name="$(cat chart/Chart.yaml | yq -r '.name')"
+        chart="${name}-${version}.tgz"
+        remote="oci://${registry}/${{ github.repository_owner }}/charts"
+        helm push "${chart}" "${remote}"
